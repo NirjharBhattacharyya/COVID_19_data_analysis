@@ -1056,4 +1056,136 @@ ggplot() +
 
 ############################################################
 
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(randomForest)
+library(rpart)
+library(ipred)
+library(xgboost)
+
+
+series <- global_df$new_cases
+series[is.na(series)] <- 0
+
+n_lags <- 7
+
+lag_df <- tibble(.rows = length(series))
+for (i in 1:n_lags) {
+  lag_df[[paste0("lag_", i)]] <- dplyr::lag(series, i)
+}
+lag_df$y <- dplyr::lead(series, 1)
+
+lag_df <- lag_df %>% drop_na()
+
+X_all <- lag_df %>% dplyr::select(dplyr::starts_with("lag_")) %>% as.data.frame()
+y_all <- as.numeric(lag_df$y)
+
+
+set.seed(123)
+n <- nrow(lag_df)
+train_idx <- sample(seq_len(n), size = floor(0.8 * n))
+test_idx  <- setdiff(seq_len(n), train_idx)
+test_idx  <- sort(test_idx)                 # keep chronological order in plot
+
+X_train <- X_all[train_idx, , drop = FALSE]
+y_train <- y_all[train_idx]
+
+X_test  <- X_all[test_idx, , drop = FALSE]
+y_test  <- y_all[test_idx]
+
+t_idx <- seq_along(test_idx)                # 1..~200 (or change to 0.. if you want)
+
+# Random forest
+set.seed(123)
+rf_model <- randomForest(x = X_train, y = y_train, ntree = 200)
+pred_rf <- as.numeric(predict(rf_model, newdata = X_test))
+
+# Linear regression
+lm_fit <- lm(y ~ ., data = data.frame(X_train, y = y_train))
+pred_lm <- as.numeric(predict(lm_fit, newdata = X_test))
+
+# Regression tree
+tree_fit <- rpart(y ~ ., data = data.frame(X_train, y = y_train), method = "anova")
+pred_tree <- as.numeric(predict(tree_fit, newdata = X_test))
+
+# Bagged trees
+set.seed(123)
+bag_fit <- ipred::bagging(y ~ ., data = data.frame(X_train, y = y_train), nbagg = 200)
+pred_bag <- as.numeric(predict(bag_fit, newdata = X_test))
+
+# XGBoost
+dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = y_train)
+dtest  <- xgb.DMatrix(data = as.matrix(X_test),  label = y_test)
+
+params <- list(
+  objective = "reg:squarederror",
+  eta = 0.1,
+  max_depth = 3,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+set.seed(123)
+xgb_fit <- xgb.train(params = params, data = dtrain, nrounds = 200, verbose = 0)
+pred_xgb <- as.numeric(predict(xgb_fit, newdata = dtest))
+
+
+model_cols <- c(
+  "Bagged trees"      = "#F8766D",
+  "Linear regression" = "#B79F00",
+  "Random forest"     = "#00BA38",
+  "Regression tree"   = "#00B0F6",
+  "XGBoost"           = "#F564E3"
+)
+model_levels <- names(model_cols)
+
+all_long <- bind_rows(
+  tibble(t_idx = t_idx, truth = y_test, pred = pred_bag,  Model = "Bagged trees"),
+  tibble(t_idx = t_idx, truth = y_test, pred = pred_lm,   Model = "Linear regression"),
+  tibble(t_idx = t_idx, truth = y_test, pred = pred_rf,   Model = "Random forest"),
+  tibble(t_idx = t_idx, truth = y_test, pred = pred_tree, Model = "Regression tree"),
+  tibble(t_idx = t_idx, truth = y_test, pred = pred_xgb,  Model = "XGBoost")
+) %>%
+  mutate(
+    Model = factor(Model, levels = model_levels),
+    abs_err = abs(truth - pred)
+  )
+
+
+ggplot(all_long, aes(x = t_idx)) +
+  geom_line(aes(y = truth), color = "black") +
+  geom_line(aes(y = pred, color = Model)) +
+  scale_color_manual(values = model_cols, drop = FALSE) +
+  labs(
+    title = "Next-day global new cases: predictions vs truth (test set)",
+    x = "Test time index",
+    y = "New cases",
+    color = "Model"
+  ) +
+  theme_bw()
+
+
+ggplot(all_long, aes(x = t_idx, y = abs_err, color = Model)) +
+  geom_line() +
+  scale_color_manual(values = model_cols, drop = FALSE) +
+  labs(
+    title = "Absolute forecasting error over time (test set)",
+    x = "Test time index",
+    y = "|true - pred|",
+    color = "Model"
+  ) +
+  theme_bw()
+
+
+ggplot(all_long, aes(x = abs_err, y = Model, color = Model)) +
+  geom_boxplot(fill = "white") +
+  scale_color_manual(values = model_cols, drop = FALSE) +
+  labs(
+    title = "Distribution of absolute errors by model (test set)",
+    x = "Absolute error",
+    y = NULL,
+    color = "Model"
+  ) +
+  theme_bw()
 
