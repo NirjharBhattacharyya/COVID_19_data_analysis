@@ -1,10 +1,7 @@
-###
 ############################################################
 # COVID-19 GLOBAL TIME SERIES ANALYSIS (JHU CONFIRMED)
 # Full EDA + PCA + Clustering + RF + ARIMA + LDA/QDA
 ############################################################
-
-## Install packages once (uncomment if needed)
 # install.packages(c("tidyverse", "zoo", "randomForest", "forecast", "MASS"))
 
 library(tidyverse)
@@ -17,7 +14,6 @@ library(MASS)
 # 1. LOAD DATA
 ############################################################
 
-# Path to your file (adjust if needed)
 df <- read.csv("time_series_covid19_confirmed_global.csv", check.names = FALSE, stringsAsFactors = FALSE)
 
 str(df)
@@ -48,7 +44,6 @@ denom <- c(NA, head(global_cum, -1))
 growth_raw <- ifelse(denom > 0, (global_cum - denom) / denom, NA)
 global_growth <- replace(growth_raw, is.infinite(growth_raw), NA)
 
-# Put into a tibble for plotting
 global_df <- tibble(
   date          = dates,
   cum_cases     = global_cum,
@@ -57,14 +52,14 @@ global_df <- tibble(
   growth_rate   = global_growth
 )
 
-## 2.1 Plot: Global cumulative cases
+## Plot Global cumulative cases
 ggplot(global_df, aes(x = date, y = cum_cases)) +
   geom_line(color = "steelblue") +
   labs(title = "Global cumulative COVID-19 cases", x = "Date", y = "Cumulative cases") +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-## 2.2 Plot: Global daily new cases & 7-day mean
+## Plot Global daily new cases & 7-day mean
 ggplot(global_df, aes(x = date)) +
   geom_line(aes(y = new_cases), alpha = 0.3, color = "grey40") +
   geom_line(aes(y = new_cases_7d), color = "red") +
@@ -74,7 +69,7 @@ ggplot(global_df, aes(x = date)) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-## 2.3 Plot: Global daily growth rate of cumulative cases
+## Plot Global daily growth rate of cumulative cases
 ggplot(global_df, aes(x = date, y = growth_rate)) +
   geom_line(color = "darkgreen") +
   labs(title = "Global daily growth rate of cumulative cases",
@@ -106,30 +101,25 @@ ggplot(top10, aes(x = reorder(`Country/Region`, total_cases), y = total_cases)) 
 ############################################################
 # 4. PCA ACROSS TIME (GLOBAL TRAJECTORY)
 ############################################################
-# --- PCA across time (global trajectory) ---
-
 # Each date is a sample; each column is a region
 X_time <- t(as.matrix(df_dates))  # rows = dates, cols = regions
 
-# 1. Remove regions with zero variance (all-zero or constant)
+# Remove regions with zero variance (all-zero or constant)
 col_sds <- apply(X_time, 2, sd, na.rm = TRUE)
 keep_cols <- col_sds > 0
 
 X_time_clean <- X_time[, keep_cols]
-
-# (Optional: check how many were dropped)
 cat("Dropped", sum(!keep_cols), "regions with zero variance\n")
 
-# 2. Scale the cleaned matrix
+# Scale the cleaned matrix
 X_time_scaled <- scale(X_time_clean, center = TRUE, scale = TRUE)
 
-# 3. Run PCA WITHOUT extra centering/scaling
 pca_time <- prcomp(X_time_scaled, center = FALSE, scale. = FALSE)
 
-# Inspect variance explained
+
 summary(pca_time)$importance[2, 1:5]
 
-# 4. Put into a data.frame for plotting
+
 dates_vec <- as.Date(colnames(df_dates), format = "%m/%d/%y")
 
 pca_time_df <- data.frame(
@@ -157,44 +147,32 @@ ggplot(pca_time_df, aes(x = PC1, y = PC2, color = time_index)) +
 ############################################################
 
 library(tidyverse)
-
-# df already loaded as:
-# df <- read.csv("time_series_covid19_confirmed_global.csv", check.names = FALSE)
-
 date_cols <- names(df)[5:ncol(df)]
 dates     <- as.Date(date_cols, format = "%m/%d/%y")
 
-# 1. Aggregate to COUNTRY level (sum provinces)
 country_df <- df %>%
   group_by(`Country/Region`) %>%
   summarise(across(all_of(date_cols), ~ sum(.x, na.rm = TRUE))) %>%
   ungroup()
 
-# Matrix: rows = countries, cols = dates (cumulative cases)
+
 mat <- as.matrix(country_df[, date_cols])
 countries <- country_df$`Country/Region`
 
-# 2. Drop countries with zero total cases (all zeros)
 keep <- rowSums(mat) > 0
 mat <- mat[keep, ]
 countries <- countries[keep]
-
-# 3. Normalize each country's trajectory over time
-#    (center & scale EACH ROW: shape-based clustering)
 mat_scaled <- t(scale(t(mat), center = TRUE, scale = TRUE))
 
-# 4. PCA on normalized trajectories (reduce dimensionality)
+
 pca_country <- prcomp(mat_scaled, center = TRUE, scale. = FALSE)
 
-# Check variance explained
-summary(pca_country)$importance[2, 1:5]
 
-# Use first 10 PCs as features for clustering
+summary(pca_country)$importance[2, 1:5]
 scores <- pca_country$x[, 1:10]
 
-# 5. K-means clustering
 set.seed(123)
-k <- 4   # choose number of clusters (you can change)
+k <- 4   
 km <- kmeans(scores, centers = k, nstart = 25)
 
 cluster_df <- data.frame(
@@ -202,16 +180,15 @@ cluster_df <- data.frame(
   Cluster = factor(km$cluster)
 )
 
-# Cluster sizes
+
 table(cluster_df$Cluster)
 
-# Peek at example countries per cluster
 cluster_df %>%
   group_by(Cluster) %>%
   slice_head(n = 5)
 
 ############################################################
-# PLOT 1: PC1 vs PC2 colored by cluster
+# PLOT PC1 vs PC2 colored by cluster
 ############################################################
 
 pca_scores_df <- data.frame(
@@ -231,7 +208,7 @@ ggplot(pca_scores_df, aes(x = PC1, y = PC2, color = Cluster)) +
   theme_bw()
 
 ############################################################
-# PLOT 2: Average normalized trajectory per cluster
+# PLOT Average normalized trajectory per cluster
 ############################################################
 
 traj_df <- as.data.frame(mat_scaled)
@@ -264,13 +241,10 @@ ggplot(avg_traj, aes(x = date, y = mean_scaled, color = Cluster)) +
 
 library(tidyverse)
 
-# df already loaded as:
-# df <- read.csv("time_series_covid19_confirmed_global.csv", check.names = FALSE)
-
 date_cols <- names(df)[5:ncol(df)]
 dates     <- as.Date(date_cols, format = "%m/%d/%y")
 
-# 1. Aggregate to country level
+# Aggregate to country level
 country_df <- df %>%
   group_by(`Country/Region`) %>%
   summarise(across(all_of(date_cols), ~ sum(.x, na.rm = TRUE))) %>%
@@ -285,16 +259,16 @@ keep <- rowSums(mat) > 0
 mat <- mat[keep, ]
 countries <- countries[keep]
 
-# 2. Normalize each country's entire trajectory (row-wise scaling)
+# Normalize each country's entire trajectory (row-wise scaling)
 mat_scaled <- t(scale(t(mat), center = TRUE, scale = TRUE))
 
-# 3. PCA dimensionality reduction
+# PCA dimensionality reduction
 pca_country <- prcomp(mat_scaled, center = TRUE, scale. = FALSE)
 
 # Use first 10 PCs
 scores <- pca_country$x[, 1:10]
 
-# 4. K-means clustering
+# K-means clustering
 set.seed(123)
 k <- 4
 km <- kmeans(scores, centers = k, nstart = 50)
@@ -308,7 +282,7 @@ cluster_table <- data.frame(
 )
 
 ############################################################
-# OUTPUT: Countries listed per cluster (clean tables)
+# Countries listed per cluster (clean tables)
 ############################################################
 
 cluster_lists <- cluster_table %>%
@@ -323,7 +297,7 @@ cluster_lists <- cluster_table %>%
 print(cluster_lists)
 
 ############################################################
-# OPTIONAL: Table in long format (for export)
+# Table in long format (for export)
 ############################################################
 
 cluster_table_sorted <- cluster_table %>%
@@ -332,7 +306,7 @@ cluster_table_sorted <- cluster_table %>%
 print(cluster_table_sorted)
 
 ############################################################
-# PLOT 1: PC1–PC2 colored by cluster
+# PLOT PC1–PC2 colored by cluster
 ############################################################
 
 pca_df <- data.frame(
@@ -352,7 +326,7 @@ ggplot(pca_df, aes(x = PC1, y = PC2, color = Cluster)) +
   theme_bw()
 
 ############################################################
-# PLOT 2: Cluster-average normalized trajectory
+# PLOT Cluster-average normalized trajectory
 ############################################################
 
 traj_df <- as.data.frame(mat_scaled)
@@ -403,7 +377,6 @@ country_clusters <- tibble(
 
 table(country_clusters$Cluster)
 
-# Example countries per cluster
 country_clusters %>%
   group_by(Cluster) %>%
   slice_head(n = 5)
@@ -430,20 +403,20 @@ ggplot(cluster_means_df,
 # 7. RANDOM FOREST: PREDICT NEXT-DAY GLOBAL NEW CASES
 ############################################################
 
+library(tidyverse)
+library(randomForest)
 series <- global_df$new_cases
-series[is.na(series)] <- 0  # replace initial NA
-
+series[is.na(series)] <- 0
 n_lags <- 7
+lag_df <- tibble(.rows = length(series))
 
-lag_df <- tibble()
 for (i in 1:n_lags) {
   lag_df[[paste0("lag_", i)]] <- dplyr::lag(series, i)
 }
+
 lag_df$y <- dplyr::lead(series, 1)
+lag_df <- tidyr::drop_na(lag_df)
 
-lag_df <- lag_df %>% drop_na()
-
-# Train/test split (80/20)
 set.seed(123)
 n <- nrow(lag_df)
 train_idx <- sample(seq_len(n), size = floor(0.8 * n))
@@ -451,33 +424,49 @@ train_idx <- sample(seq_len(n), size = floor(0.8 * n))
 train <- lag_df[train_idx, ]
 test  <- lag_df[-train_idx, ]
 
+x_train <- train %>% dplyr::select(dplyr::starts_with("lag_")) %>% as.data.frame()
+x_test  <- test  %>% dplyr::select(dplyr::starts_with("lag_")) %>% as.data.frame()
+
+y_train <- train$y
+y_test  <- test$y
+
+set.seed(123)
 rf_model <- randomForest(
-  x = train %>% select(starts_with("lag_")),
-  y = train$y,
-  ntree = 200
+  x = x_train,
+  y = y_train,
+  ntree = 200,
+  importance = TRUE
 )
 
-pred_rf <- predict(rf_model, newdata = test %>% select(starts_with("lag_")))
-
-rf_r2 <- 1 - sum((test$y - pred_rf)^2) / sum((test$y - mean(test$y))^2)
-rf_mae <- mean(abs(test$y - pred_rf))
+pred_rf <- predict(rf_model, newdata = x_test)
+rf_r2 <- 1 - sum((y_test - pred_rf)^2) / sum((y_test - mean(y_test))^2)
+rf_mae <- mean(abs(y_test - pred_rf))
 
 cat("Random Forest R^2:", rf_r2, "\n")
 cat("Random Forest MAE:", rf_mae, "\n")
 
-rf_df <- tibble(
-  index = seq_len(nrow(test)),
-  true  = test$y,
-  pred  = pred_rf
+rf_plot_df <- tibble(
+  index = seq_along(y_test),
+  true  = y_test,
+  pred  = as.numeric(pred_rf)
 )
 
-ggplot(rf_df, aes(x = index)) +
+ggplot(rf_plot_df, aes(x = index)) +
   geom_line(aes(y = true), color = "black") +
   geom_line(aes(y = pred), color = "blue") +
-  labs(title = paste0("Random Forest: next-day global new cases\nR2 = ",
-                      round(rf_r2, 2), ", MAE = ", round(rf_mae, 0)),
-       x = "Test time index", y = "New cases") +
+  labs(
+    title = paste0(
+      "Random Forest: Next-Day Global New Cases\nR2 = ",
+      round(rf_r2, 3),
+      ", MAE = ",
+      round(rf_mae, 1)
+    ),
+    x = "Test index (time order within held-out set)",
+    y = "New cases"
+  ) +
   theme_bw()
+
+
 
 ############################################################
 # 8. ARIMA FORECASTING OF GLOBAL NEW CASES
@@ -551,7 +540,7 @@ y_train <- label[train_idx_c]
 X_test  <- X_pca[-train_idx_c, ]
 y_test  <- label[-train_idx_c]
 
-## 8.1 LDA
+## LDA
 lda_fit <- lda(x = X_train, grouping = as.factor(y_train))
 lda_pred <- predict(lda_fit, X_test)
 
@@ -577,7 +566,7 @@ ggplot(lda_df, aes(x = LD1, y = 0, color = label)) +
   theme(axis.text.y = element_blank(),
         axis.ticks.y = element_blank())
 
-## 8.2 QDA
+## QDA
 qda_fit <- qda(x = X_train, grouping = as.factor(y_train))
 qda_pred <- predict(qda_fit, X_test)
 
@@ -641,7 +630,6 @@ library(rpart.plot)
 # Using the reg_df built earlier
 tree_reg <- rpart(y ~ ., data = reg_df, method = "anova")
 
-# Plot the tree
 rpart.plot(tree_reg, main = "Regression Tree: Predict Next-Day Cases")
 
 # Predictions
@@ -783,8 +771,6 @@ ggplot() +
 library(tidyverse)
 library(zoo)
 
-# 1) Read data -------------------------------------------------------------
-
 file_path <- "time_series_covid19_confirmed_global.csv"
 
 df <- read.csv(file_path, check.names = FALSE, stringsAsFactors = FALSE)
@@ -808,7 +794,7 @@ df_dates <- df[, date_cols]
 # Replace NAs (if any) with 0
 df_dates[is.na(df_dates)] <- 0
 
-# 2) Global-level time series ---------------------------------------------
+
 
 # Global cumulative (sum across all regions)
 global_cum <- colSums(df_dates, na.rm = TRUE)
@@ -827,7 +813,7 @@ global_df <- tibble(
   new_cases_7d = global_new_7d
 )
 
-# Plot 1: Global cumulative cases -----------------------------------------
+
 
 ggplot(global_df, aes(x = date, y = cum_cases)) +
   geom_line(color = "steelblue") +
@@ -839,7 +825,6 @@ ggplot(global_df, aes(x = date, y = cum_cases)) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-# Plot 2: Global daily new cases + 7-day mean -----------------------------
 
 ggplot(global_df, aes(x = date)) +
   geom_line(aes(y = new_cases), color = "grey50", alpha = 0.4) +
@@ -852,7 +837,6 @@ ggplot(global_df, aes(x = date)) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-# 3) Country-level totals --------------------------------------------------
 
 country_df <- df %>%
   group_by(`Country/Region`) %>%
@@ -865,7 +849,6 @@ country_totals <- country_df %>%
   mutate(total_cases = .data[[last_col]]) %>%
   select(`Country/Region`, total_cases)
 
-# Plot 3: Histogram of total cases per country -----------------------------
 
 ggplot(country_totals, aes(x = total_cases)) +
   geom_histogram(bins = 40, fill = "skyblue", color = "grey20") +
@@ -877,7 +860,6 @@ ggplot(country_totals, aes(x = total_cases)) +
   ) +
   theme_bw()
 
-# Plot 4: Top 15 countries by total cases ---------------------------------
 
 top15 <- country_totals %>%
   arrange(desc(total_cases)) %>%
@@ -901,12 +883,7 @@ ggplot(top15, aes(x = reorder(`Country/Region`, total_cases), y = total_cases)) 
 
 library(tidyverse)
 
-# We already have:
-# country_df: rows = countries, cols = dates (cumulative cases)
-# date_cols : names of date columns
-# dates     : Date vector for these columns
 
-# 1) Compute total cases (last date) and pick top 15 countries
 last_col <- tail(date_cols, 1)
 
 top15_countries <- country_df %>%
@@ -915,11 +892,11 @@ top15_countries <- country_df %>%
   slice_head(n = 15) %>%
   pull(`Country/Region`)
 
-# Filter matrix for just those 15
+
 top15_df <- country_df %>%
   filter(`Country/Region` %in% top15_countries)
 
-# 2) Long format for ggplot heatmap
+
 top15_long <- top15_df %>%
   pivot_longer(
     cols = all_of(date_cols),
@@ -932,7 +909,7 @@ top15_long <- top15_df %>%
     log10_cases = log10(cum_cases + 1)
   )
 
-# 3) Optionally standardize per country (so we see shape more than magnitude)
+# Optionally standardize per country (so we see shape more than magnitude)
 top15_long <- top15_long %>%
   group_by(`Country/Region`) %>%
   mutate(
@@ -940,7 +917,7 @@ top15_long <- top15_long %>%
   ) %>%
   ungroup()
 
-# 4) Heatmap using standardized log10_scaled
+# Heatmap using standardized log10_scaled
 ggplot(top15_long,
        aes(x = date, y = `Country/Region`, fill = log10_scaled)) +
   geom_tile() +
@@ -968,9 +945,6 @@ library(tidyverse)
 library(MASS)
 library(ggplot2)
 
-# ------------------ 1. COUNTRY-LEVEL MATRIX ----------------------
-
-# df = raw data already read using:
 # df <- read.csv("time_series_covid19_confirmed_global.csv", check.names = FALSE)
 
 date_cols <- names(df)[5:ncol(df)]
@@ -989,16 +963,16 @@ keep_rows <- rowSums(country_mat) > 0
 country_mat <- country_mat[keep_rows, ]
 country_names <- country_names[keep_rows]
 
-# ------------------ 2. NORMALIZE (row-wise) ----------------------
+# NORMALIZE (row-wise) 
 
 country_scaled <- t(scale(t(country_mat), center = TRUE, scale = TRUE))
 
-# ------------------ 3. PCA --------------------------------------
+# PCA 
 
 pca_country <- prcomp(country_scaled, center = TRUE, scale. = FALSE)
 scores <- pca_country$x[, 1:10]   # use first 10 PCs
 
-# ------------------ 4. LABEL CREATION (high vs low burden) -----
+# LABEL CREATION (high vs low burden) 
 
 total_cases <- rowSums(country_mat)
 threshold <- quantile(total_cases, 0.75)
@@ -1006,7 +980,7 @@ threshold <- quantile(total_cases, 0.75)
 burden_label <- ifelse(total_cases >= threshold, 1, 0)  # 1 = high burden
 burden_factor <- as.factor(burden_label)
 
-# ------------------ 5. QDA MODEL ------------------------------
+# QDA MODEL 
 
 qda_df <- data.frame(scores, burden = burden_factor)
 
@@ -1019,7 +993,7 @@ qda_pred <- predict(qda_model)$class
 acc <- mean(qda_pred == burden_factor)
 cat("QDA accuracy =", round(acc, 3), "\n")
 
-# ------------------ 6. DECISION BOUNDARY (PC1-PC2) --------------
+# DECISION BOUNDARY (PC1-PC2)
 
 # Create grid over PC1-PC2
 grid <- expand.grid(
