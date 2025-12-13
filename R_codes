@@ -666,14 +666,27 @@ rpart.plot(tree_class, main = "Classification Tree: Country Burden Class")
 
 
 
+
 ############################################################
-# 13. XGBOOST: Predict Next Day
+# 13. XGBOOST: Predict Next-Day 
 ############################################################
 
 library(xgboost)
 
-X <- as.matrix(reg_df %>% select(starts_with("lag_")))
-y <- reg_df$y
+# reg_df must already exist and contain lag_1...lag_7 and y
+# (built from your linear regression / lag feature section)
+
+X <- reg_df %>%
+  dplyr::select(dplyr::starts_with("lag_")) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  as.matrix()
+
+y <- as.numeric(reg_df$y)
+
+# Safety: remove any rows with NA/Inf (should be none if you used drop_na)
+ok <- is.finite(y) & apply(X, 1, function(r) all(is.finite(r)))
+X <- X[ok, , drop = FALSE]
+y <- y[ok]
 
 dtrain <- xgb.DMatrix(data = X, label = y)
 
@@ -685,6 +698,7 @@ params <- list(
   colsample_bytree = 0.8
 )
 
+set.seed(123)
 xgb_model <- xgb.train(
   params = params,
   data = dtrain,
@@ -694,18 +708,29 @@ xgb_model <- xgb.train(
 
 pred_xgb <- predict(xgb_model, X)
 
+# Metrics (optional)
+xgb_r2  <- 1 - sum((y - pred_xgb)^2) / sum((y - mean(y))^2)
+xgb_mae <- mean(abs(y - pred_xgb))
+cat("XGBoost R^2:", xgb_r2, "\n")
+cat("XGBoost MAE:", xgb_mae, "\n")
+
 # Plot
 plot_df_xgb <- tibble(
-  index = 1:length(y),
+  index = seq_along(y),
   actual = y,
-  pred = pred_xgb
+  pred = as.numeric(pred_xgb)
 )
 
 ggplot(plot_df_xgb, aes(x = index)) +
   geom_line(aes(y = actual), color = "black") +
   geom_line(aes(y = pred), color = "blue") +
-  labs(title = "XGBoost: Next-Day Prediction", y = "Cases") +
+  labs(
+    title = paste0("XGBoost: Next-Day Prediction  |  R2=", round(xgb_r2, 3),
+                   "  MAE=", round(xgb_mae, 1)),
+    y = "Cases", x = ""
+  ) +
   theme_bw()
+
 
 
 
@@ -847,7 +872,7 @@ country_df <- df %>%
 last_col <- tail(date_cols, 1)
 country_totals <- country_df %>%
   mutate(total_cases = .data[[last_col]]) %>%
-  select(`Country/Region`, total_cases)
+  dplyr::select(`Country/Region`, total_cases)
 
 
 ggplot(country_totals, aes(x = total_cases)) +
@@ -1030,6 +1055,5 @@ ggplot() +
   theme_bw()
 
 ############################################################
-# END OF SINGLE QDA CODE BLOCK
-############################################################
+
 
