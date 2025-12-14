@@ -104,7 +104,7 @@ ggplot(top10, aes(x = reorder(`Country/Region`, total_cases), y = total_cases)) 
 # Each date is a sample; each column is a region
 X_time <- t(as.matrix(df_dates))  # rows = dates, cols = regions
 
-# Remove regions with zero variance (all-zero or constant)
+# Removing regions with zero variance (all-zero or constant)
 col_sds <- apply(X_time, 2, sd, na.rm = TRUE)
 keep_cols <- col_sds > 0
 
@@ -282,7 +282,7 @@ cluster_table <- data.frame(
 )
 
 ############################################################
-# Countries listed per cluster (clean tables)
+# Countries listed per cluster
 ############################################################
 
 cluster_lists <- cluster_table %>%
@@ -512,17 +512,17 @@ ggplot(plot_df, aes(x = date, y = value, color = type)) +
 # 9. PCA -> LDA / QDA ON COUNTRY TRAJECTORIES
 ############################################################
 
-# Labels: high-burden vs low-burden countries
+# high-burden vs low-burden countries
 final_totals <- country_df[[last_col]]
 threshold <- quantile(final_totals, 0.75, na.rm = TRUE)
 
 label <- ifelse(final_totals >= threshold, 1, 0)  # 1 = high burden
 table(label)
 
-# Features: country trajectories (dates), scaled
+# country trajectories (dates), scaled
 X_country <- scale(country_mat)
 
-# PCA reduction (keep first 20 PCs)
+# PCA reduction (keeping first 20 PCs)
 pca_country <- prcomp(X_country, center = FALSE, scale. = FALSE)
 X_pca <- pca_country$x[, 1:20]
 
@@ -674,7 +674,6 @@ rpart.plot(tree_class, main = "Classification Tree: Country Burden Class")
 library(xgboost)
 
 # reg_df must already exist and contain lag_1...lag_7 and y
-# (built from your linear regression / lag feature section)
 
 X <- reg_df %>%
   dplyr::select(dplyr::starts_with("lag_")) %>%
@@ -683,7 +682,6 @@ X <- reg_df %>%
 
 y <- as.numeric(reg_df$y)
 
-# Safety: remove any rows with NA/Inf (should be none if you used drop_na)
 ok <- is.finite(y) & apply(X, 1, function(r) all(is.finite(r)))
 X <- X[ok, , drop = FALSE]
 y <- y[ok]
@@ -708,7 +706,7 @@ xgb_model <- xgb.train(
 
 pred_xgb <- predict(xgb_model, X)
 
-# Metrics (optional)
+# Metrics
 xgb_r2  <- 1 - sum((y - pred_xgb)^2) / sum((y - mean(y))^2)
 xgb_mae <- mean(abs(y - pred_xgb))
 cat("XGBoost R^2:", xgb_r2, "\n")
@@ -930,11 +928,10 @@ top15_long <- top15_df %>%
   ) %>%
   mutate(
     date = as.Date(date_char, format = "%m/%d/%y"),
-    # log-transform for color scaling (avoid huge range)
+    # log-transform for color scaling 
     log10_cases = log10(cum_cases + 1)
   )
 
-# Optionally standardize per country (so we see shape more than magnitude)
 top15_long <- top15_long %>%
   group_by(`Country/Region`) %>%
   mutate(
@@ -1086,7 +1083,7 @@ set.seed(123)
 n <- nrow(lag_df)
 train_idx <- sample(seq_len(n), size = floor(0.8 * n))
 test_idx  <- setdiff(seq_len(n), train_idx)
-test_idx  <- sort(test_idx)                 # keep chronological order in plot
+test_idx  <- sort(test_idx)                 
 
 X_train <- X_all[train_idx, , drop = FALSE]
 y_train <- y_all[train_idx]
@@ -1094,7 +1091,7 @@ y_train <- y_all[train_idx]
 X_test  <- X_all[test_idx, , drop = FALSE]
 y_test  <- y_all[test_idx]
 
-t_idx <- seq_along(test_idx)                # 1..~200 (or change to 0.. if you want)
+t_idx <- seq_along(test_idx)                
 
 # Random forest
 set.seed(123)
@@ -1224,7 +1221,7 @@ X_all <- lag_df %>% dplyr::select(dplyr::starts_with("lag_")) %>% as.data.frame(
 y_all <- as.numeric(lag_df$y)
 
 # ============================================================
-# CHRONOLOGICAL TRAIN/TEST SPLIT (NOT RANDOM)
+# CHRONOLOGICAL TRAIN/TEST SPLIT 
 # ============================================================
 n <- nrow(lag_df)
 train_end <- floor(0.8 * n)
@@ -1307,3 +1304,217 @@ ggplot(all_long, aes(x = t_idx)) +
     color = "Model"
   ) +
   theme_bw()
+
+
+
+
+
+
+##############################################################################
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(randomForest)
+library(rpart)
+library(ipred)
+library(xgboost)
+
+series <- global_df$new_cases
+series[is.na(series)] <- 0
+
+n_lags <- 7
+
+lag_df <- tibble(.rows = length(series))
+for (i in 1:n_lags) {
+  lag_df[[paste0("lag_", i)]] <- dplyr::lag(series, i)
+}
+lag_df$y <- dplyr::lead(series, 1)
+
+lag_df <- lag_df %>% drop_na()
+
+X_all <- lag_df %>% dplyr::select(dplyr::starts_with("lag_")) %>% as.data.frame()
+y_all <- as.numeric(lag_df$y)
+
+# ============================================================
+# CHRONOLOGICAL TRAIN/TEST SPLIT 
+# ============================================================
+n <- nrow(lag_df)
+train_end <- floor(0.8 * n)
+
+train_idx <- 1:train_end
+test_idx  <- (train_end + 1):n
+
+X_train <- X_all[train_idx, , drop = FALSE]
+y_train <- y_all[train_idx]
+
+X_test  <- X_all[test_idx, , drop = FALSE]
+y_test  <- y_all[test_idx]
+
+t_idx <- 0:(length(test_idx) - 1)
+
+# Random forest
+set.seed(123)
+rf_model <- randomForest(x = X_train, y = y_train, ntree = 200)
+pred_rf <- as.numeric(predict(rf_model, newdata = X_test))
+
+# Linear regression
+lm_fit <- lm(y ~ ., data = data.frame(X_train, y = y_train))
+pred_lm <- as.numeric(predict(lm_fit, newdata = X_test))
+
+# Regression tree
+tree_fit <- rpart(y ~ ., data = data.frame(X_train, y = y_train), method = "anova")
+pred_tree <- as.numeric(predict(tree_fit, newdata = X_test))
+
+# Bagged trees
+set.seed(123)
+bag_fit <- ipred::bagging(y ~ ., data = data.frame(X_train, y = y_train), nbagg = 200)
+pred_bag <- as.numeric(predict(bag_fit, newdata = X_test))
+
+# XGBoost
+dtrain <- xgb.DMatrix(data = as.matrix(X_train), label = y_train)
+dtest  <- xgb.DMatrix(data = as.matrix(X_test),  label = y_test)
+
+params <- list(
+  objective = "reg:squarederror",
+  eta = 0.1,
+  max_depth = 3,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+set.seed(123)
+xgb_fit <- xgb.train(params = params, data = dtrain, nrounds = 200, verbose = 0)
+pred_xgb <- as.numeric(predict(xgb_fit, newdata = dtest))
+
+model_cols <- c(
+  "Bagged trees"      = "#F8766D",
+  "Linear regression" = "#B79F00",
+  "Random forest"     = "#00BA38",
+  "Regression tree"   = "#00B0F6",
+  "XGBoost"           = "#F564E3"
+)
+model_levels <- names(model_cols)
+
+all_long <- bind_rows(
+  tibble(t_idx = t_idx, truth = y_test, pred = pred_bag,  Model = "Bagged trees"),
+  tibble(t_idx = t_idx, truth = y_test, pred = pred_lm,   Model = "Linear regression"),
+  tibble(t_idx = t_idx, truth = y_test, pred = pred_rf,   Model = "Random forest"),
+  tibble(t_idx = t_idx, truth = y_test, pred = pred_tree, Model = "Regression tree"),
+  tibble(t_idx = t_idx, truth = y_test, pred = pred_xgb,  Model = "XGBoost")
+) %>%
+  mutate(
+    Model = factor(Model, levels = model_levels),
+    abs_err = abs(truth - pred)
+  )
+
+# Predictions vs truth
+ggplot(all_long, aes(x = t_idx)) +
+  geom_line(aes(y = truth), color = "black") +
+  geom_line(aes(y = pred, color = Model)) +
+  scale_color_manual(values = model_cols, drop = FALSE) +
+  labs(
+    title = "Next-day global new cases: predictions vs truth (test set)",
+    x = "Test time index",
+    y = "New cases",
+    color = "Model"
+  ) +
+  theme_bw()
+
+#Absolute forecasting error over time 
+ggplot(all_long, aes(x = t_idx, y = abs_err, color = Model)) +
+  geom_line() +
+  scale_color_manual(values = model_cols, drop = FALSE) +
+  labs(
+    title = "Absolute forecasting error over time (test set)",
+    x = "Test time index",
+    y = "|true - pred|",
+    color = "Model"
+  ) +
+  theme_bw()
+
+# Distribution of absolute errors by model
+ggplot(all_long, aes(x = abs_err, y = Model, color = Model)) +
+  geom_boxplot(fill = "white") +
+  scale_color_manual(values = model_cols, drop = FALSE) +
+  labs(
+    title = "Distribution of absolute errors by model (test set)",
+    x = "Absolute error",
+    y = NULL,
+    color = "Model"
+  ) +
+  theme_bw()
+
+
+
+
+
+
+
+##################################################
+
+# ==============================
+# Performance metrics table
+# ==============================
+
+R2 <- function(y, yhat) {
+  1 - sum((y - yhat)^2) / sum((y - mean(y))^2)
+}
+
+MAE <- function(y, yhat) {
+  mean(abs(y - yhat))
+}
+
+RMSE <- function(y, yhat) {
+  sqrt(mean((y - yhat)^2))
+}
+
+MAPE <- function(y, yhat) {
+  mean(abs((y - yhat) / y)) * 100
+}
+
+metrics_table <- tibble(
+  Model = c(
+    "XGBoost",
+    "Random forest",
+    "Linear regression",
+    "Bagged trees",
+    "Regression tree"
+  ),
+  R2 = c(
+    R2(y_test, pred_xgb),
+    R2(y_test, pred_rf),
+    R2(y_test, pred_lm),
+    R2(y_test, pred_bag),
+    R2(y_test, pred_tree)
+  ),
+  MAE = c(
+    MAE(y_test, pred_xgb),
+    MAE(y_test, pred_rf),
+    MAE(y_test, pred_lm),
+    MAE(y_test, pred_bag),
+    MAE(y_test, pred_tree)
+  ),
+  RMSE = c(
+    RMSE(y_test, pred_xgb),
+    RMSE(y_test, pred_rf),
+    RMSE(y_test, pred_lm),
+    RMSE(y_test, pred_bag),
+    RMSE(y_test, pred_tree)
+  ),
+  MAPE = c(
+    MAPE(y_test, pred_xgb),
+    MAPE(y_test, pred_rf),
+    MAPE(y_test, pred_lm),
+    MAPE(y_test, pred_bag),
+    MAPE(y_test, pred_tree)
+  )
+) %>%
+  mutate(
+    R2   = round(R2, 2),
+    MAE  = round(MAE, 0),
+    RMSE = round(RMSE, 0),
+    MAPE = round(MAPE, 1)
+  )
+
+metrics_table
